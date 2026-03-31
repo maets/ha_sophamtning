@@ -1,4 +1,3 @@
-import json
 import logging
 from datetime import datetime
 from uuid import uuid4
@@ -17,7 +16,6 @@ DESCRIPTION = "Waste collection schedule for Teknik i Väst (Arvika, Eda, Årjä
 URL = "https://teknikivast.se"
 TEST_CASES = {
     "Test": {
-        "service_provider": "teknikivast",
         "street_address": "Storgatan 17",
     },
 }
@@ -46,7 +44,6 @@ AUTH_KEY = "Ef07mdRITQGeiQRId7ao9bmkhIKv2if6ciW17HPWd7a1ae0c"
 class Source:
     def __init__(
         self,
-        service_provider: str = "teknikivast",
         api_key: str | None = None,
         street_address: str | None = None,
     ):
@@ -96,9 +93,9 @@ class Source:
         )
         if not response.ok:
             raise SourceArgumentException(
-                "api_key", f"Failed to register device: {response.text}"
+                "api_key", "Failed to register device"
             )
-        _LOGGER.info("Registered device with api_key %s", uuid)
+        _LOGGER.debug("Registered device with api_key %s", uuid)
         self._api_key = uuid
 
     def _register_address(self):
@@ -108,6 +105,7 @@ class Source:
             headers=self._headers(),
             timeout=30,
         )
+        response.raise_for_status()
         data = response.json()
         if not data:
             raise SourceArgumentException(
@@ -137,7 +135,7 @@ class Source:
         response = requests.post(
             f"{API_URL}/next-pickup/set-status",
             json={
-                "plant_id": match["plant_number"],
+                "plant_id": match.get("plant_number"),
                 "address_enabled": True,
                 "notification_enabled": False,
             },
@@ -145,7 +143,7 @@ class Source:
             timeout=30,
         )
         response.raise_for_status()
-        _LOGGER.info("Registered address %s", match["address"])
+        _LOGGER.debug("Registered address %s", match.get("address"))
 
     def fetch(self) -> list[Collection]:
         if not self._api_key:
@@ -162,6 +160,7 @@ class Source:
             headers=self._headers(),
             timeout=30,
         )
+        response.raise_for_status()
         data = response.json()
         multi = len(data) > 1
         entries = []
@@ -175,12 +174,13 @@ class Source:
                 icon = ICON_MAP.get(waste_type, "mdi:trash-can")
                 if multi:
                     waste_type = f"{address} {waste_type}"
+                try:
+                    parsed_date = datetime.strptime(pickup_date, "%Y-%m-%d").date()
+                except ValueError:
+                    _LOGGER.debug("Skipping malformed date: %s", pickup_date)
+                    continue
                 entries.append(
-                    Collection(
-                        date=datetime.strptime(pickup_date, "%Y-%m-%d").date(),
-                        t=waste_type,
-                        icon=icon,
-                    )
+                    Collection(date=parsed_date, t=waste_type, icon=icon)
                 )
 
         return entries
